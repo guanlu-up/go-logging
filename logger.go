@@ -11,9 +11,11 @@ import (
 type LogLevel uint16
 
 type Logger struct {
-	filepath string
-	perm     os.FileMode
-	Level    LogLevel
+	Level    LogLevel    // 日志输出的等级
+	filepath string      // 存储日志的文件路径
+	perm     os.FileMode // 文件自身的权限
+	maxSize  uint64      // 文件最大可存储的容量
+	fio      *os.File    // 日志文件打开后的对象
 }
 
 const (
@@ -25,6 +27,7 @@ const (
 	FATAL
 )
 
+// LevelMapper  level to string
 var LevelMapper = map[LogLevel]string{
 	TRACE:   "TRACE",
 	DEBUG:   "DEBUG",
@@ -52,21 +55,14 @@ func output(logger *Logger, level LogLevel, message string) {
 		date, LevelMapper[level], path.Base(filepath), line, message)
 	fmt.Print(msg)
 
-	if logger.filepath != "" && logger.perm != 0x0 {
-		mode := os.O_WRONLY | os.O_CREATE | os.O_APPEND
-		fio, err := os.OpenFile(logger.filepath, mode, logger.perm)
-		if err != nil {
-			// 如果打开文件出错则将相关属性值重制为空
-			fmt.Println(err)
-			logger.filepath = ""
-			logger.perm = 0x0
-			return
-		}
-		defer func(f *os.File) {
-			_ = f.Close()
-		}(fio)
+	// 如果已经指定并打开了日志文件,则将日志一同记录到文件中
+	if logger.fio != nil {
+		_, err := logger.fio.WriteString(msg)
 
-		_, err = fio.WriteString(msg)
+		if err != nil {
+			fmt.Println(err)
+			err = logger.CloseFile()
+		}
 	}
 }
 
@@ -98,9 +94,28 @@ func NewLogger(level LogLevel) *Logger {
 }
 
 // SetFile 设置记录日志的文件
-// param filepath: 文件路径,需要为绝对路径
-// param perm: 打开文件所需的权限,如 0644
-func (log *Logger) SetFile(filepath string, perm os.FileMode) {
+// param filepath: 文件路径,需要为完整路径
+// param perm: 文件自身的权限,如 0644
+// param maxSize: 文件最大可存储的容量
+func (log *Logger) SetFile(filepath string, perm os.FileMode, maxSize uint64) {
+
 	log.filepath = filepath
 	log.perm = perm
+	log.maxSize = maxSize
+
+	mode := os.O_WRONLY | os.O_CREATE | os.O_APPEND
+	fio, err := os.OpenFile(log.filepath, mode, log.perm)
+	if err != nil {
+		panic(err)
+	}
+	log.fio = fio
+}
+
+func (log *Logger) CloseFile() error {
+	if log.fio == nil {
+		return fmt.Errorf("未指定日志文件,无法进行关闭")
+	}
+	err := log.fio.Close()
+	log.fio = nil
+	return err
 }
